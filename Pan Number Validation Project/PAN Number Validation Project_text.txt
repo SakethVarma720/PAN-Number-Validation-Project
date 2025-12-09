@@ -1,0 +1,104 @@
+  ---PAN Number Validation Project (SQL | PostgreSQL)---
+
+-- Data Cleaning
+-- below code did four things (trimmed, removed dubs, selected only uppercased, selected which is not null)
+select distinct upper(trim(pan_nums)) as pan_nums from pan_data
+	where pan_nums is not null
+	AND trim(pan_nums) <> '';
+
+-- Data Validation
+-- User defined FN to check if adj characters are the same
+create or replace function fn_check_adjchar(p_str text)
+returns boolean
+language plpgsql
+as $$
+begin
+	for i in 1..(length(p_str) - 1)
+	loop
+		if substring(p_str,i,1) = substring(p_str,i+1,1)
+		then
+			return true; -- the adj characters are same
+		end if;
+	end loop;
+	return false; -- the adj characters are not same	
+end;	
+$$
+
+-- User defined FN to check if sequencial characters are present
+
+create or replace function fn_check_seqchar(p_str text)
+returns boolean
+language plpgsql
+as $$
+begin
+	for i in 1..(length(p_str) - 1)
+	loop
+		if ascii(substring(p_str,i+1,1)) - ascii(substring(p_str,i,1)) <> 1
+		then
+			return false; -- string is not in sequencial order
+		end if;
+	end loop;
+	return true; -- string has a sequencial order
+end;
+$$
+
+-- Regular expression to validate the pattern of PAN number
+select *
+from pan_data
+where pan_nums ~ '^[A-Z]{5}[0-9]{4}[A-Z]$'
+
+-- valid and invalid PAN categorization
+
+with cte_cleaned_PAN_data as
+		(select distinct upper(trim(pan_nums)) as pan_nums from pan_data
+		where pan_nums is not null
+		AND trim(pan_nums) <> ''),
+	cte_valid_pans as
+		(select *
+		from cte_cleaned_PAN_data
+		WHERE fn_check_adjchar(pan_nums) = false
+		and fn_check_seqchar(substring(pan_nums,1,5)) = false
+		and fn_check_seqchar(substring(pan_nums,6,4)) = false
+		and pan_nums ~ '^[A-Z]{5}[0-9]{4}[A-Z]$')
+
+-- MAIN QUERY
+
+Select cln.pan_nums
+, CASE when vld.pan_nums is not null then 'Valid PAN' else 'Invalid PAN' end as Status
+from cte_cleaned_PAN_data cln
+left join cte_valid_pans vld on vld.pan_nums = cln.pan_nums;
+
+-- Summary report 
+create or replace view vw_valid_invalid_pans as
+	with cte_cleaned_PAN_data as
+			(select distinct upper(trim(pan_nums)) as pan_nums from pan_data
+			where pan_nums is not null
+			AND trim(pan_nums) <> ''),
+		cte_valid_pans as
+			(select *
+			from cte_cleaned_PAN_data
+			WHERE fn_check_adjchar(pan_nums) = false
+			and fn_check_seqchar(substring(pan_nums,1,5)) = false
+			and fn_check_seqchar(substring(pan_nums,6,4)) = false
+			and pan_nums ~ '^[A-Z]{5}[0-9]{4}[A-Z]$')
+	
+	Select cln.pan_nums
+	, CASE when vld.pan_nums is not null then 'Valid PAN' else 'Invalid PAN' end as Status
+	from cte_cleaned_PAN_data cln
+	left join cte_valid_pans vld on vld.pan_nums = cln.pan_nums;
+
+select * from vw_valid_invalid_pans
+
+-- summary report query
+with cte as
+	(select 
+			(select count(*) from pan_data) as total_processed_records,
+			count(*) filter (where status = 'Valid PAN') as total_valid_pans,
+			count(*) filter (where status = 'Invalid PAN') as total_invalid_pans
+		from vw_valid_invalid_pans)
+
+select total_processed_records,total_valid_pans,total_invalid_pans,
+	total_processed_records - (total_valid_pans+total_invalid_pans) as total_missing_pans
+from cte;
+
+		
